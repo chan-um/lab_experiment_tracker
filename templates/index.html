@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <!-- <link rel="stylesheet" href="{{ url_for("static", filename="styles.css")}}"> -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <title>My first web page</title>
+    <style>
+        img {
+            width: 150px;
+            border-radius: 100px;
+            float: left;
+            margin-right: 10px; 
+        }
+        
+        .username {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h3>Profiles</h3>
+    </header>
+    <a href="/add_data">ADD</a>
+    <br>
+    <table>
+       <thead>
+          <th>Id</th>
+          <th>First Name</th>
+          <th>Last Name</th>
+          <th>Email</th>
+          <th>#</th>
+       </thead>
+       {% for data in profiles %}
+       <tbody>
+          <td>{{data.id}}</td>
+          <td>{{data.first_name}}</td>
+          <td>{{data.last_name}}</td>
+          <td>{{data.email}}</td>
+          <td><a href="/delete/{{data.id}}" type="button">Delete</a></td>
+       </tbody>
+       {% endfor%}
+    </table>
+
+    <img src="{{ url_for('static', filename='images/image.jpg') }}" alt="My image">    
+    <p class="username">@umchanchan</p>
+    <p>"Hello, world!"</p>
+    <p>Lorem ipsum dolor sit amet consectetur adipisicing elit. Quisquam, quos.</p>
+</html>
