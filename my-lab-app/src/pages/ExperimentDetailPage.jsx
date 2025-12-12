@@ -7,8 +7,13 @@ import { FileUploadModal } from '../components/FileUploadModal';
  * The detailed view for a single experiment (the "notebook")
  */
 export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteExperiment, onNavigate, user }) => {
-  // Check if current user owns this experiment
-  const isOwner = user && experiment.owner === user.name;
+  // Check if current user owns this experiment (prefer ID; fallback to name for older data)
+  const isOwner =
+    !!user &&
+    (
+      (experiment.ownerId && user.id === experiment.ownerId) ||
+      (experiment.owner && user.name && experiment.owner === user.name)
+    );
   const [activeTab, setActiveTab] = useState('logs');
   const [newLog, setNewLog] = useState('');
   const [analysisText, setAnalysisText] = useState(experiment.analysis || '');

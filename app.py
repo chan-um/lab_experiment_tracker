@@ -7,6 +7,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from sqlalchemy import Index, event, create_engine
 from sqlalchemy.engine import Engine
+from sqlalchemy.engine.url import make_url
 import os
 import json
 import uuid
@@ -81,7 +82,14 @@ db = SQLAlchemy(app)
 def set_db_pragma(dbapi_conn, connection_record):
     """Configure database connection with optimizations"""
     # Only configure SQLite (PostgreSQL doesn't need PRAGMA statements)
-    if database_uri.startswith('sqlite:///'):
+    try:
+        url = make_url(database_uri)
+        is_sqlite = url.drivername.startswith('sqlite')
+    except Exception:
+        # Fallback in case parsing fails
+        is_sqlite = database_uri.startswith('sqlite:')
+
+    if is_sqlite:
         cursor = dbapi_conn.cursor()
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
@@ -200,6 +208,7 @@ class Experiment(db.Model):
             'status': self.status,
             'startDate': self.start_date,
             'owner': self.owner_user.name if self.owner_user else 'Unknown',
+            'ownerId': self.owner_user.id if self.owner_user else None,
             'hypothesis': self.hypothesis or '',
             'protocol': self.protocol or '',
             'analysis': self.analysis or '',
