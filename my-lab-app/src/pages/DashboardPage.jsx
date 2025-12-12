@@ -24,7 +24,7 @@ export const DashboardPage = ({ experiments, onSelectExperiment, user }) => {
     <div className="p-8">
       <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
       <p className="mt-2 text-lg text-gray-600">
-        Welcome back, {user?.name ? `Dr. ${user.name}` : 'Dr. User'}!
+        Welcome back, {user?.name ? `${user.name}` : 'User'}!
       </p>
 
       {/* Stats Grid */}

@@ -62,7 +62,7 @@ export const Sidebar = ({ currentPage, onNavigate, onNewExperiment, onLogout, us
               <IconUserCircle className="h-8 w-8 text-gray-500 flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold leading-6 text-gray-400 truncate">
-                  {user?.name ? `Dr. ${user.name}` : 'Dr. User'}
+                  {user?.name ? `${user.name}` : 'User'}
                 </p>
                 <p className="text-xs text-gray-500 truncate">
                   {user?.email || 'user@lab.com'}

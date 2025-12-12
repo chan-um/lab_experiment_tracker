@@ -6,7 +6,9 @@ import { FileUploadModal } from '../components/FileUploadModal';
 /**
  * The detailed view for a single experiment (the "notebook")
  */
-export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteExperiment, onNavigate }) => {
+export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteExperiment, onNavigate, user }) => {
+  // Check if current user owns this experiment
+  const isOwner = user && experiment.owner === user.name;
   const [activeTab, setActiveTab] = useState('logs');
   const [newLog, setNewLog] = useState('');
   const [analysisText, setAnalysisText] = useState(experiment.analysis || '');
@@ -190,37 +192,47 @@ export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteE
             </>
           ) : (
             <>
-              <div className="flex items-center gap-x-2">
-                <label htmlFor="status" className="text-sm font-medium text-gray-700">Status:</label>
-                <select
-                  id="status"
-                  value={experiment.status}
-                  onChange={handleStatusChange}
-                  className="rounded-md border-0 py-1.5 pl-3 pr-8 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-indigo-600 sm:text-sm"
-                >
-                  <option>Planning</option>
-                  <option>In Progress</option>
-                  <option>Analyzing</option>
-                  <option>Completed</option>
-                  <option>Failed</option>
-                </select>
-              </div>
-              <button
-                onClick={() => setIsEditing(true)}
-                className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 flex items-center gap-x-2"
-                title="Edit experiment"
-              >
-                <IconPencil className="w-4 h-4" />
-                Edit
-              </button>
-              <button
-                onClick={() => onDeleteExperiment(experiment.id)}
-                className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 flex items-center gap-x-2"
-                title="Delete experiment"
-              >
-                <IconTrash className="w-4 h-4" />
-                Delete
-              </button>
+              {isOwner && (
+                <div className="flex items-center gap-x-2">
+                  <label htmlFor="status" className="text-sm font-medium text-gray-700">Status:</label>
+                  <select
+                    id="status"
+                    value={experiment.status}
+                    onChange={handleStatusChange}
+                    className="rounded-md border-0 py-1.5 pl-3 pr-8 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-indigo-600 sm:text-sm"
+                  >
+                    <option>Planning</option>
+                    <option>In Progress</option>
+                    <option>Analyzing</option>
+                    <option>Completed</option>
+                    <option>Failed</option>
+                  </select>
+                </div>
+              )}
+              {isOwner ? (
+                <>
+                  <button
+                    onClick={() => setIsEditing(true)}
+                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 flex items-center gap-x-2"
+                    title="Edit experiment"
+                  >
+                    <IconPencil className="w-4 h-4" />
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => onDeleteExperiment(experiment.id)}
+                    className="rounded-md bg-red-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 flex items-center gap-x-2"
+                    title="Delete experiment"
+                  >
+                    <IconTrash className="w-4 h-4" />
+                    Delete
+                  </button>
+                </>
+              ) : (
+                <div className="text-sm text-gray-500 italic">
+                  Viewing experiment by {experiment.owner}
+                </div>
+              )}
             </>
           )}
         </div>
@@ -254,38 +266,46 @@ export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteE
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Log Entry Column */}
             <div className="lg:col-span-2">
-              <form onSubmit={handleAddLog}>
-                <label htmlFor="new-log" className="block text-sm font-medium leading-6 text-gray-900">
-                  Add a new log entry
-                </label>
-                <div className="mt-2">
-                  <textarea
-                    rows={4}
-                    id="new-log"
-                    value={newLog}
-                    onChange={(e) => setNewLog(e.target.value)}
-                    className="block w-full rounded-md border-0 py-2 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm"
-                    placeholder="Log an observation, result, or deviation..."
-                  />
+              {isOwner ? (
+                <form onSubmit={handleAddLog}>
+                  <label htmlFor="new-log" className="block text-sm font-medium leading-6 text-gray-900">
+                    Add a new log entry
+                  </label>
+                  <div className="mt-2">
+                    <textarea
+                      rows={4}
+                      id="new-log"
+                      value={newLog}
+                      onChange={(e) => setNewLog(e.target.value)}
+                      className="block w-full rounded-md border-0 py-2 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm"
+                      placeholder="Log an observation, result, or deviation..."
+                    />
+                  </div>
+                  <div className="mt-3 flex items-center justify-between">
+                    <button
+                      type="submit"
+                      disabled={isSaving}
+                      className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isSaving ? 'Adding...' : 'Add Log'}
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowUploadModal(true)}
+                      className="group flex items-center text-sm text-gray-500 hover:text-gray-700"
+                    >
+                      <IconPaperClip className="w-5 h-5 mr-1 text-gray-400 group-hover:text-gray-600" />
+                      Attach file
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
+                  <p className="text-sm text-blue-800">
+                    You are viewing this experiment in read-only mode. Only the owner ({experiment.owner}) can make changes.
+                  </p>
                 </div>
-                <div className="mt-3 flex items-center justify-between">
-                  <button
-                    type="submit"
-                    disabled={isSaving}
-                    className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isSaving ? 'Adding...' : 'Add Log'}
-                  </button>
-                  <button 
-                    type="button" 
-                    onClick={() => setShowUploadModal(true)}
-                    className="group flex items-center text-sm text-gray-500 hover:text-gray-700"
-                  >
-                    <IconPaperClip className="w-5 h-5 mr-1 text-gray-400 group-hover:text-gray-600" />
-                    Attach file
-                  </button>
-                </div>
-              </form>
+              )}
 
               {/* Log Stream */}
               <div className="mt-10">
@@ -337,29 +357,33 @@ export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteE
                             </span>
                           )}
                         </button>
-                        <button
-                          onClick={() => handleFileDelete(file.id)}
-                          disabled={isDeletingFile === file.id}
-                          className="ml-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
-                          title="Delete file"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+                        {isOwner && (
+                          <button
+                            onClick={() => handleFileDelete(file.id)}
+                            disabled={isDeletingFile === file.id}
+                            className="ml-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity disabled:opacity-50"
+                            title="Delete file"
+                          >
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>
                 ) : (
                   <p className="mt-4 text-sm text-gray-500">No files attached yet.</p>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setShowUploadModal(true)}
-                  className="mt-4 w-full rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
-                >
-                  Upload Files
-                </button>
+                {isOwner && (
+                  <button
+                    type="button"
+                    onClick={() => setShowUploadModal(true)}
+                    className="mt-4 w-full rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50"
+                  >
+                    Upload Files
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -434,20 +458,23 @@ export const ExperimentDetailPage = ({ experiment, onUpdateExperiment, onDeleteE
                 id="analysis-text"
                 value={analysisText}
                 onChange={(e) => setAnalysisText(e.target.value)}
-                className="block w-full rounded-md border-0 py-2 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm"
-                placeholder="Start writing your analysis..."
+                disabled={!isOwner}
+                className={`block w-full rounded-md border-0 py-2 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm ${!isOwner ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                placeholder={isOwner ? "Start writing your analysis..." : "Only the owner can edit this analysis."}
               />
             </div>
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={handleAnalysisSave}
-                disabled={isSaving}
-                className="rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSaving ? 'Saving...' : 'Save Analysis'}
-              </button>
-            </div>
+            {isOwner && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={handleAnalysisSave}
+                  disabled={isSaving}
+                  className="rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSaving ? 'Saving...' : 'Save Analysis'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

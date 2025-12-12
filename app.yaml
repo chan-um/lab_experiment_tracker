@@ -1,0 +1,23 @@
+runtime: python311
+
+env_variables:
+  # Set these in Google Cloud Console -> App Engine -> Settings -> Environment Variables
+  # SECRET_KEY: your-secret-key-here
+  # CORS_ORIGINS: https://your-frontend-domain.com
+  FLASK_DEBUG: 'False'
+
+# For Cloud SQL (recommended for production instead of SQLite)
+# beta_settings:
+#   cloud_sql_instances: PROJECT_ID:REGION:INSTANCE_NAME
+
+handlers:
+- url: /.*
+  script: auto
+
+# Instance configuration
+instance_class: F1  # Free tier
+automatic_scaling:
+  min_instances: 0
+  max_instances: 10
+  target_cpu_utilization: 0.6
+

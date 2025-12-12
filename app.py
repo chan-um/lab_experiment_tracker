@@ -5,24 +5,121 @@ from flask_cors import CORS
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from sqlalchemy import Index, event, create_engine
+from sqlalchemy.engine import Engine
 import os
 import json
 import uuid
+import re
 
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
-app.config['SECRET_KEY'] = 'your-secret-key-change-in-production'
+
+# Configuration from environment variables (with defaults for local development)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+# Database configuration
+# Supports both SQLite (default for local dev) and PostgreSQL (for production/Cloud SQL)
+# 
+# For local development: No DATABASE_URL needed - uses SQLite automatically
+# For production/Cloud SQL: Set DATABASE_URL environment variable
+#   PostgreSQL format: postgresql://user:password@/dbname?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME
+#   Or standard: postgresql://user:password@HOST/dbname
+database_uri = os.environ.get('DATABASE_URL')
+if not database_uri:
+    # Default to SQLite for local development (no setup required)
+    # Google Cloud Run uses /tmp for writable directories
+    if os.environ.get('GAE_ENV') or os.environ.get('CLOUD_RUN'):
+        database_uri = 'sqlite:////tmp/database.db'
+    else:
+        database_uri = 'sqlite:///database.db'
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_uri
+
+# Google Cloud Run uses /tmp for writable directories (for uploads)
+if os.environ.get('GAE_ENV') or os.environ.get('CLOUD_RUN'):
+    app.config['UPLOAD_FOLDER'] = '/tmp/uploads'
+
+# Database isolation level configuration
+# SQLite: None = SERIALIZABLE (default, safest)
+# PostgreSQL: Supports READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE
+is_using_postgres = database_uri.startswith('postgresql://')
+if is_using_postgres:
+    # PostgreSQL configuration
+    isolation_level = os.environ.get('DB_ISOLATION_LEVEL', 'READ COMMITTED')
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'isolation_level': isolation_level,
+        'pool_size': int(os.environ.get('DB_POOL_SIZE', '10')),
+        'max_overflow': int(os.environ.get('DB_MAX_OVERFLOW', '20')),
+        'pool_pre_ping': True,
+        'pool_recycle': 3600,
+    }
+else:
+    # SQLite configuration
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'isolation_level': None,  # SERIALIZABLE for SQLite
+    }
 
 # Create uploads directory if it doesn't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Enable CORS for React app
-CORS(app, origins=["http://localhost:5173", "http://localhost:3000"], supports_credentials=True)
+# CORS configuration - allow frontend origin from environment variable
+allowed_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:5173,http://localhost:3000').split(',')
+CORS(app, origins=allowed_origins, supports_credentials=True)
+
+# Session cookie configuration for cross-origin requests
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True  # Required for SameSite=None
+app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 db = SQLAlchemy(app)
+
+# Database-specific connection configuration
+@event.listens_for(Engine, "connect")
+def set_db_pragma(dbapi_conn, connection_record):
+    """Configure database connection with optimizations"""
+    # Only configure SQLite (PostgreSQL doesn't need PRAGMA statements)
+    if database_uri.startswith('sqlite:///'):
+        cursor = dbapi_conn.cursor()
+        # Enable WAL mode for better concurrency
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+# Input Validation Helpers
+
+def validate_email(email):
+    """Validate email format to prevent injection and ensure proper format"""
+    if not email or not isinstance(email, str):
+        return False
+    # Basic email validation pattern
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, email)) and len(email) <= 200
+
+def validate_alphanumeric_code(code, min_len=1, max_len=20):
+    """Validate alphanumeric codes (e.g., group codes)"""
+    if not code or not isinstance(code, str):
+        return False
+    # Allow only alphanumeric characters
+    return code.isalnum() and min_len <= len(code) <= max_len
+
+def validate_experiment_id(exp_id):
+    """Validate experiment ID format"""
+    if not exp_id or not isinstance(exp_id, str):
+        return False
+    # Allow alphanumeric, hyphens, and underscores, max 50 chars
+    pattern = r'^[a-zA-Z0-9_-]+$'
+    return bool(re.match(pattern, exp_id)) and len(exp_id) <= 50
+
+def sanitize_string_input(value, max_length=500):
+    """Sanitize string input by trimming and limiting length"""
+    if not isinstance(value, str):
+        return None
+    return value.strip()[:max_length] if value else None
 
 # Database Models
 class Group(db.Model):
@@ -33,6 +130,11 @@ class Group(db.Model):
     date_created = db.Column(db.DateTime, default=datetime.now)
     
     members = db.relationship('GroupMember', backref='group', lazy=True, cascade='all, delete-orphan')
+    
+    # Index for foreign key used in queries
+    __table_args__ = (
+        Index('idx_group_created_by', 'created_by_id'),  # For queries filtering by created_by_id
+    )
     
     def to_dict(self):
         creator = User.query.get(self.created_by_id) if self.created_by_id else None
@@ -55,6 +157,11 @@ class User(db.Model):
     
     experiments = db.relationship('Experiment', backref='owner_user', lazy=True)
     group_memberships = db.relationship('GroupMember', backref='user', lazy=True, cascade='all, delete-orphan')
+    
+    # Index for foreign key used in queries
+    __table_args__ = (
+        Index('idx_user_current_group', 'current_group_id'),  # For queries filtering by current_group_id
+    )
     
     def to_dict(self):
         return {
@@ -79,6 +186,13 @@ class Experiment(db.Model):
     logs = db.relationship('ExperimentLog', backref='experiment', lazy=True, cascade='all, delete-orphan', order_by='ExperimentLog.timestamp')
     files = db.relationship('ExperimentFile', backref='experiment', lazy=True, cascade='all, delete-orphan', order_by='ExperimentFile.date_created')
     
+    # Indexes for frequently queried columns
+    __table_args__ = (
+        Index('idx_experiment_owner', 'owner_id'),  # For queries filtering by owner_id
+        Index('idx_experiment_owner_exp', 'owner_id', 'exp_id'),  # Composite index for common query pattern
+        Index('idx_experiment_status', 'status'),  # For filtering by status
+    )
+    
     def to_dict(self):
         return {
             'id': self.exp_id,
@@ -100,6 +214,11 @@ class ExperimentLog(db.Model):
     content = db.Column(db.Text, nullable=False)
     date_created = db.Column(db.DateTime, default=datetime.now)
     
+    # Index for frequently queried foreign key
+    __table_args__ = (
+        Index('idx_experiment_log_experiment', 'experiment_id'),  # For queries filtering by experiment_id
+    )
+    
     def to_dict(self):
         return {
             'timestamp': self.timestamp,
@@ -116,6 +235,12 @@ class ExperimentFile(db.Model):
     mime_type = db.Column(db.String(100), nullable=True)
     date_created = db.Column(db.DateTime, default=datetime.now)
     
+    # Indexes for frequently queried columns
+    __table_args__ = (
+        Index('idx_experiment_file_experiment', 'experiment_id'),  # For queries filtering by experiment_id
+        Index('idx_experiment_file_composite', 'experiment_id', 'id'),  # Composite index for common query pattern
+    )
+    
     def to_dict(self):
         return {
             'id': self.id,
@@ -131,7 +256,13 @@ class GroupMember(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     date_joined = db.Column(db.DateTime, default=datetime.now)
     
-    __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='unique_group_member'),)
+    # Unique constraint already creates an index, but we add separate indexes for individual columns
+    # since queries often filter by just user_id or just group_id
+    __table_args__ = (
+        db.UniqueConstraint('group_id', 'user_id', name='unique_group_member'),
+        Index('idx_group_member_user', 'user_id'),  # For queries filtering by user_id
+        Index('idx_group_member_group', 'group_id'),  # For queries filtering by group_id
+    )
     
     def to_dict(self):
         return {
@@ -152,18 +283,30 @@ class Profile(db.Model):
     def __repr__(self):
         return f"Name: {self.first_name} {self.last_name}"
 
-# ========== API Routes ==========
+# API Routes
 
 # Authentication Routes
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.get_json()
-    email = data.get('email')
+    email = data.get('email', '').strip()
     password = data.get('password')
     name = data.get('name', email.split('@')[0] if email else 'User')
     
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+    
+    # Validate email format to prevent injection
+    if not validate_email(email):
+        return jsonify({'error': 'Invalid email format'}), 400
+    
+    # Validate password length
+    if len(password) < 6 or len(password) > 200:
+        return jsonify({'error': 'Password must be between 6 and 200 characters'}), 400
+    
+    # Sanitize name
+    if name:
+        name = sanitize_string_input(name, max_length=200) or 'User'
     
     if User.query.filter_by(email=email).first():
         return jsonify({'error': 'User already exists'}), 400
@@ -182,11 +325,15 @@ def register():
 @app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
-    email = data.get('email')
+    email = data.get('email', '').strip()
     password = data.get('password')
     
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+    
+    # Validate email format to prevent injection
+    if not validate_email(email):
+        return jsonify({'error': 'Invalid email format'}), 400
     
     user = User.query.filter_by(email=email).first()
     
@@ -231,7 +378,9 @@ def update_current_user():
     
     # Update email if provided (check for uniqueness)
     if 'email' in data:
-        new_email = data['email']
+        new_email = data.get('email', '').strip()
+        if not validate_email(new_email):
+            return jsonify({'error': 'Invalid email format'}), 400
         if new_email != user.email:
             if User.query.filter_by(email=new_email).first():
                 return jsonify({'error': 'Email already in use'}), 400
@@ -305,6 +454,10 @@ def join_group():
     
     if not code:
         return jsonify({'error': 'Group code is required'}), 400
+    
+    # Validate group code format to prevent injection
+    if not validate_alphanumeric_code(code, min_len=6, max_len=6):
+        return jsonify({'error': 'Invalid group code format'}), 400
     
     group = Group.query.filter_by(code=code).first()
     if not group:
@@ -409,26 +562,33 @@ def get_experiments():
     if not user:
         return jsonify({'error': 'User not found'}), 404
     
-    # Get user's own experiments
-    experiments = Experiment.query.filter_by(owner_id=user_id).all()
-    all_experiment_ids = {exp.id for exp in experiments}
+    # Check if scope query parameter is provided
+    scope = request.args.get('scope', 'user')  # Default to 'user'
     
-    # Get all groups the user is a member of
-    memberships = GroupMember.query.filter_by(user_id=user_id).all()
-    
-    # Get experiments from all group members across all groups
-    for membership in memberships:
-        group = Group.query.get(membership.group_id)
-        if group:
-            # Get all member user IDs in this group
-            member_ids = [member.user_id for member in group.members]
-            # Get experiments from all group members
-            group_experiments = Experiment.query.filter(Experiment.owner_id.in_(member_ids)).all()
-            # Combine and deduplicate
-            for exp in group_experiments:
-                if exp.id not in all_experiment_ids:
-                    experiments.append(exp)
-                    all_experiment_ids.add(exp.id)
+    if scope == 'group':
+        # Get user's own experiments
+        experiments = Experiment.query.filter_by(owner_id=user_id).all()
+        all_experiment_ids = {exp.id for exp in experiments}
+        
+        # Get all groups the user is a member of
+        memberships = GroupMember.query.filter_by(user_id=user_id).all()
+        
+        # Get experiments from all group members across all groups
+        for membership in memberships:
+            group = Group.query.get(membership.group_id)
+            if group:
+                # Get all member user IDs in this group
+                member_ids = [member.user_id for member in group.members]
+                # Get experiments from all group members
+                group_experiments = Experiment.query.filter(Experiment.owner_id.in_(member_ids)).all()
+                # Combine and deduplicate
+                for exp in group_experiments:
+                    if exp.id not in all_experiment_ids:
+                        experiments.append(exp)
+                        all_experiment_ids.add(exp.id)
+    else:
+        # Get only user's own experiments (default)
+        experiments = Experiment.query.filter_by(owner_id=user_id).all()
     
     # Return experiments list directly (not wrapped in 'experiments' key)
     experiments_list = [exp.to_dict() for exp in experiments]
@@ -444,6 +604,10 @@ def create_experiment():
     
     # Generate unique experiment ID
     exp_id = data.get('id') or f"EXP-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    
+    # Validate experiment ID format if provided by user
+    if exp_id and not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
     
     # Check if ID already exists
     if Experiment.query.filter_by(exp_id=exp_id).first():
@@ -471,7 +635,32 @@ def get_experiment(exp_id):
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
     
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
+    
+    # First check if user owns the experiment
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
+    
+    # If not found, check if it belongs to a group member
+    if not experiment:
+        # Get all groups the user is a member of
+        memberships = GroupMember.query.filter_by(user_id=user_id).all()
+        member_ids = {user_id}  # Include user's own ID
+        
+        for membership in memberships:
+            group = Group.query.get(membership.group_id)
+            if group:
+                # Get all member user IDs in this group
+                for member in group.members:
+                    member_ids.add(member.user_id)
+        
+        # Try to find experiment owned by any group member
+        experiment = Experiment.query.filter(
+            Experiment.exp_id == exp_id,
+            Experiment.owner_id.in_(member_ids)
+        ).first()
+    
     if not experiment:
         return jsonify({'error': 'Experiment not found'}), 404
     
@@ -482,6 +671,10 @@ def update_experiment(exp_id):
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
+    
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
     
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
     if not experiment:
@@ -519,6 +712,10 @@ def delete_experiment(exp_id):
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
     
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
+    
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
     if not experiment:
         return jsonify({'error': 'Experiment not found'}), 404
@@ -533,6 +730,10 @@ def add_log(exp_id):
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
+    
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
     
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
     if not experiment:
@@ -556,6 +757,10 @@ def upload_file(exp_id):
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
+    
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
     
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
     if not experiment:
@@ -602,6 +807,10 @@ def delete_file(exp_id, file_id):
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
     
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
+    
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
     if not experiment:
         return jsonify({'error': 'Experiment not found'}), 404
@@ -624,6 +833,10 @@ def download_file(exp_id, file_id):
     user_id = session.get('user_id')
     if not user_id:
         return jsonify({'error': 'Not authenticated'}), 401
+    
+    # Validate experiment ID format to prevent injection
+    if not validate_experiment_id(exp_id):
+        return jsonify({'error': 'Invalid experiment ID format'}), 400
     
     experiment = Experiment.query.filter_by(exp_id=exp_id, owner_id=user_id).first()
     if not experiment:
@@ -677,10 +890,11 @@ def delete(id):
     return redirect(url_for('index'))
 
 def migrate_database():
-    """Add missing columns to existing database tables"""
+    """Add missing columns and indexes to existing database tables"""
     from sqlalchemy import inspect, text
     
     inspector = inspect(db.engine)
+    db_dialect = db.engine.dialect.name
     
     # Check if user table exists and if current_group_id column is missing
     if 'user' in inspector.get_table_names():
@@ -688,12 +902,89 @@ def migrate_database():
         if 'current_group_id' not in columns:
             print("Adding current_group_id column to user table...")
             with db.engine.connect() as conn:
-                conn.execute(text("ALTER TABLE user ADD COLUMN current_group_id INTEGER"))
+                # PostgreSQL uses different syntax for ALTER TABLE
+                if db_dialect == 'postgresql':
+                    conn.execute(text("ALTER TABLE \"user\" ADD COLUMN current_group_id INTEGER"))
+                else:
+                    conn.execute(text("ALTER TABLE user ADD COLUMN current_group_id INTEGER"))
                 conn.commit()
             print("Migration completed: Added current_group_id column")
+    
+    # Create indexes if they don't exist
+    print("Creating database indexes...")
+    indexes_to_create = [
+        # Experiment indexes
+        ("idx_experiment_owner", "experiment", "owner_id"),
+        ("idx_experiment_owner_exp", "experiment", "owner_id, exp_id"),
+        ("idx_experiment_status", "experiment", "status"),
+        # ExperimentLog indexes
+        ("idx_experiment_log_experiment", "experiment_log", "experiment_id"),
+        # ExperimentFile indexes
+        ("idx_experiment_file_experiment", "experiment_file", "experiment_id"),
+        ("idx_experiment_file_composite", "experiment_file", "experiment_id, id"),
+        # GroupMember indexes
+        ("idx_group_member_user", "group_member", "user_id"),
+        ("idx_group_member_group", "group_member", "group_id"),
+        # User indexes
+        ("idx_user_current_group", "user", "current_group_id"),
+        # Group indexes
+        ("idx_group_created_by", "group", "created_by_id"),
+    ]
+    
+    existing_indexes = []
+    try:
+        with db.engine.connect() as conn:
+            if db_dialect == 'postgresql':
+                # PostgreSQL: query pg_indexes system catalog
+                result = conn.execute(text("""
+                    SELECT indexname FROM pg_indexes 
+                    WHERE schemaname = 'public' 
+                    AND indexname NOT LIKE 'pg_%'
+                """))
+            else:
+                # SQLite: query sqlite_master
+                result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'"))
+            existing_indexes = [row[0] for row in result]
+    except Exception as e:
+        print(f"Warning: Could not check existing indexes: {e}")
+    
+    created_count = 0
+    for index_name, table_name, columns in indexes_to_create:
+        if index_name not in existing_indexes:
+            try:
+                with db.engine.connect() as conn:
+                    # PostgreSQL requires quotes around table names that are reserved words
+                    if db_dialect == 'postgresql':
+                        # Quote table names for PostgreSQL
+                        quoted_table = f'"{table_name}"' if table_name in ['user', 'group'] else table_name
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {quoted_table} ({columns})"))
+                    else:
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns})"))
+                    conn.commit()
+                created_count += 1
+                print(f"  Created index: {index_name}")
+            except Exception as e:
+                print(f"  Warning: Could not create index {index_name}: {e}")
+    
+    if created_count > 0:
+        print(f"Index migration completed: Created {created_count} indexes")
+    else:
+        print("All indexes already exist")
 
-if __name__ == '__main__':
-    with app.app_context():
+# Initialize database tables on startup (runs for both local and Cloud Run/gunicorn)
+# This runs when the module is imported, which happens before gunicorn starts the app
+with app.app_context():
+    try:
         db.create_all()
         migrate_database()
-    app.run(debug=True, port=5000)
+        print("✅ Database tables initialized successfully")
+    except Exception as e:
+        print(f"⚠️ Warning: Database initialization error: {e}")
+        # Don't fail startup - tables might already exist or connection might fail
+
+if __name__ == '__main__':
+    # Get port from environment variable (required for Cloud Run)
+    port = int(os.environ.get('PORT', 5000))
+    # Disable debug mode in production
+    debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    app.run(debug=debug, host='0.0.0.0', port=port)

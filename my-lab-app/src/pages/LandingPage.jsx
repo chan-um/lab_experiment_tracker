@@ -36,17 +36,12 @@ export const LandingPage = ({ onNavigateToLogin }) => {
             A comprehensive lab notebook solution for researchers. Document protocols, log observations, 
             analyze results, and collaborate with your team—all in one place.
           </p>
-          <div className="mt-10 flex items-center justify-center gap-x-6">
+          <div className="mt-10 flex items-center justify-center">
             <button
               onClick={onNavigateToLogin}
               className="rounded-md bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
             >
               Get Started
-            </button>
-            <button
-              className="text-base font-semibold leading-6 text-gray-900 hover:text-indigo-600"
-            >
-              Learn More <span aria-hidden="true">→</span>
             </button>
           </div>
         </div>

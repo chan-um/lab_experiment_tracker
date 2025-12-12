@@ -22,7 +22,8 @@ export default function App() {
 
   // App state
   const [currentPage, setCurrentPage] = useState('dashboard'); // 'dashboard', 'experiments', 'new', 'detail'
-  const [experiments, setExperiments] = useState([]);
+  const [experiments, setExperiments] = useState([]); // User's experiments (for dashboard)
+  const [groupExperiments, setGroupExperiments] = useState([]); // Group experiments (for experiments list page)
   const [selectedExperiment, setSelectedExperiment] = useState(null);
 
   // Check for existing session on mount
@@ -58,8 +59,13 @@ export default function App() {
   // Load experiments from API
   const loadExperiments = async () => {
     try {
-      const exps = await experimentsAPI.getAll();
-      setExperiments(exps);
+      // Load user's experiments (for dashboard)
+      const userExps = await experimentsAPI.getAll('user');
+      setExperiments(userExps);
+      
+      // Load group experiments (for experiments list page)
+      const groupExps = await experimentsAPI.getAll('group');
+      setGroupExperiments(groupExps);
     } catch (err) {
       console.error('Failed to load experiments:', err);
     }
@@ -89,6 +95,7 @@ export default function App() {
     setUser(null);
     setSelectedExperiment(null);
     setExperiments([]);
+    setGroupExperiments([]);
     setCurrentPage('dashboard');
   };
 
@@ -115,6 +122,12 @@ export default function App() {
     try {
       const created = await experimentsAPI.create(newExperiment);
       setExperiments([created, ...experiments]);
+      // Also add to group experiments if user is in a group
+      setGroupExperiments(prev => {
+        // Check if experiment already exists to avoid duplicates
+        const exists = prev.find(exp => exp.id === created.id);
+        return exists ? prev : [created, ...prev];
+      });
       setSelectedExperiment(created);
       setCurrentPage('detail');
     } catch (err) {
@@ -142,6 +155,12 @@ export default function App() {
           exp.id === id ? updated : exp
         )
       );
+    // Also update in group experiments if it exists there
+    setGroupExperiments(prevExperiments =>
+      prevExperiments.map(exp => 
+          exp.id === id ? updated : exp
+        )
+      );
       // Update the selected experiment as well
       if (selectedExperiment && selectedExperiment.id === id) {
         setSelectedExperiment(updated);
@@ -159,8 +178,10 @@ export default function App() {
 
     try {
       await experimentsAPI.delete(id);
-      // Remove from experiments list
+      // Remove from user's experiments list
       setExperiments(prevExperiments => prevExperiments.filter(exp => exp.id !== id));
+      // Remove from group experiments list
+      setGroupExperiments(prevExperiments => prevExperiments.filter(exp => exp.id !== id));
       // If the deleted experiment was selected, navigate away
     if (selectedExperiment && selectedExperiment.id === id) {
         setSelectedExperiment(null);
@@ -189,11 +210,12 @@ export default function App() {
                 onUpdateExperiment={handleUpdateExperiment}
                 onDeleteExperiment={handleDeleteExperiment}
                 onNavigate={handleNavigate}
+                user={user}
               />;
     }
     if (currentPage === 'experiments') {
       return <ExperimentListPage 
-                experiments={experiments}
+                experiments={groupExperiments}
                 onSelectExperiment={handleSelectExperiment}
                 onDeleteExperiment={handleDeleteExperiment}
               />;

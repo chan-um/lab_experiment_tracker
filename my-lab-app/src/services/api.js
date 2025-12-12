@@ -1,11 +1,20 @@
 // API service layer for communicating with Flask backend
-const API_BASE_URL = 'http://localhost:5000/api';
+// Use environment variable for API URL, fallback to localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
 // Helper function to handle API responses
 async function handleResponse(response) {
+  // Check if response is JSON
+  const contentType = response.headers.get('content-type');
+  if (!contentType || !contentType.includes('application/json')) {
+    // If not JSON, it's probably an HTML error page
+    const text = await response.text();
+    throw new Error(`Server error (${response.status}): ${text.substring(0, 100)}`);
+  }
+  
   const data = await response.json();
   if (!response.ok) {
-    throw new Error(data.error || 'An error occurred');
+    throw new Error(data.error || `Server error: ${response.status}`);
   }
   return data;
 }
@@ -130,8 +139,12 @@ export const groupsAPI = {
 
 // Experiments API
 export const experimentsAPI = {
-  async getAll() {
-    const response = await fetch(`${API_BASE_URL}/experiments`, {
+  async getAll(scope = 'user') {
+    // scope can be 'user' (default) or 'group'
+    const url = scope === 'group' 
+      ? `${API_BASE_URL}/experiments?scope=group`
+      : `${API_BASE_URL}/experiments`;
+    const response = await fetch(url, {
       credentials: 'include',
     });
     const data = await handleResponse(response);
