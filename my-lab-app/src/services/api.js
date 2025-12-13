@@ -2,6 +2,9 @@
 // Use environment variable for API URL, fallback to localhost for development
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
 
+// Debug: Log the API URL being used (remove in production if needed)
+console.log('API_BASE_URL:', API_BASE_URL);
+
 // Helper function to handle API responses
 async function handleResponse(response) {
   // Check if response is JSON
@@ -19,10 +22,24 @@ async function handleResponse(response) {
   return data;
 }
 
+// Helper function to handle fetch errors (network errors, CORS, etc.)
+async function safeFetch(url, options) {
+  try {
+    const response = await fetch(url, options);
+    return response;
+  } catch (error) {
+    // Network error, CORS error, or other fetch failures
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error(`Cannot connect to server. Please ensure the backend is running at ${API_BASE_URL.replace('/api', '')}`);
+    }
+    throw error;
+  }
+}
+
 // Authentication API
 export const authAPI = {
   async register(email, password, name) {
-    const response = await fetch(`${API_BASE_URL}/register`, {
+    const response = await safeFetch(`${API_BASE_URL}/register`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -34,7 +51,7 @@ export const authAPI = {
   },
 
   async login(email, password) {
-    const response = await fetch(`${API_BASE_URL}/login`, {
+    const response = await safeFetch(`${API_BASE_URL}/login`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -46,7 +63,7 @@ export const authAPI = {
   },
 
   async logout() {
-    const response = await fetch(`${API_BASE_URL}/logout`, {
+    const response = await safeFetch(`${API_BASE_URL}/logout`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -54,14 +71,14 @@ export const authAPI = {
   },
 
   async getCurrentUser() {
-    const response = await fetch(`${API_BASE_URL}/me`, {
+    const response = await safeFetch(`${API_BASE_URL}/me`, {
       credentials: 'include',
     });
     return handleResponse(response);
   },
 
   async updateProfile(updates) {
-    const response = await fetch(`${API_BASE_URL}/me`, {
+    const response = await safeFetch(`${API_BASE_URL}/me`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',

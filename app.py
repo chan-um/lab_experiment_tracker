@@ -26,8 +26,7 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 # 
 # For local development: No DATABASE_URL needed - uses SQLite automatically
 # For production/Cloud SQL: Set DATABASE_URL environment variable
-#   PostgreSQL format: postgresql://user:password@/dbname?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME
-#   Or standard: postgresql://user:password@HOST/dbname
+#   PostgreSQL format: postgresql://labdb:0108@/dbname?host=/cloudsql/PROJECT_ID:REGION:INSTANCE_NAME
 database_uri = os.environ.get('DATABASE_URL')
 if not database_uri:
     # Default to SQLite for local development (no setup required)
@@ -71,8 +70,11 @@ allowed_origins = os.environ.get('CORS_ORIGINS', 'http://localhost:5173,http://l
 CORS(app, origins=allowed_origins, supports_credentials=True)
 
 # Session cookie configuration for cross-origin requests
+# Secure=True is required for SameSite=None in production (HTTPS)
+# For local development (HTTP), we need Secure=False
+is_production = os.environ.get('GAE_ENV') or os.environ.get('CLOUD_RUN') or os.environ.get('FLASK_ENV') == 'production'
 app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_SECURE'] = True  # Required for SameSite=None
+app.config['SESSION_COOKIE_SECURE'] = is_production  # True for HTTPS (production), False for HTTP (local)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 db = SQLAlchemy(app)
@@ -99,7 +101,6 @@ def set_db_pragma(dbapi_conn, connection_record):
         cursor.close()
 
 # Input Validation Helpers
-
 def validate_email(email):
     """Validate email format to prevent injection and ensure proper format"""
     if not email or not isinstance(email, str):

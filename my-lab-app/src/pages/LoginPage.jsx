@@ -40,7 +40,15 @@ export const LoginPage = ({ onLogin, onBackToHome }) => {
         onLogin(response.user);
       }
     } catch (err) {
-      setError(err.message || 'An error occurred. Please try again.');
+      // Provide more helpful error messages
+      let errorMessage = err.message || 'An error occurred. Please try again.';
+      
+      // Check if it's a connection error
+      if (errorMessage.includes('Cannot connect to server') || errorMessage.includes('Failed to fetch')) {
+        errorMessage = 'Cannot connect to the backend server. Please ensure the Flask backend is running.';
+      }
+      
+      setError(errorMessage);
       setIsLoading(false);
     }
   };
