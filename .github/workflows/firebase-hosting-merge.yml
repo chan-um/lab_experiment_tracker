@@ -17,7 +17,9 @@ jobs:
       - name: Build frontend
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'https://lab-app-r7ao4jqdya-ue.a.run.app/api' }}
-        run: npm run build
+        run: |
+          echo "Building with VITE_API_BASE_URL=$VITE_API_BASE_URL"
+          npm run build
         working-directory: my-lab-app
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
